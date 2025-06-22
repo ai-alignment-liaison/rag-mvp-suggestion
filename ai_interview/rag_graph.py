@@ -10,7 +10,7 @@ if not hasattr(torch, "get_default_device"):
 import asyncio, json, os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -39,12 +39,14 @@ llm = ChatOpenAI(
 # ───────────────────────── state dataclass ───────────────────
 @dataclass
 class GraphState:
+    conversation_history: List[Union[AIMessage, HumanMessage]] = field(default_factory=list)
     ai_messages: List[AIMessage] = field(default_factory=list)
     user_messages: List[HumanMessage] = field(default_factory=list)
-    answers: List[str] = field(default_factory=list)
+    answers: List[str] = field(default_factory=list)  # For predefined
     profile: Optional[Dict[str, Any]] = None
     evidences: Optional[List[Dict]] = None
     strategy: Optional[str] = None
+    freeform_question_count: int = 0
 
 
 # ───────────────────────── interview node ────────────────────
@@ -57,9 +59,9 @@ QUESTIONS = [
 ]
 
 
-def interview(state: GraphState):
+def predefined_interview(state: GraphState):
     # record user's latest answer
-    if state.user_messages: 
+    if state.user_messages:
         # Ensure state.answers is a list if it somehow became None
         if state.answers is None:
             state.answers = []
@@ -82,9 +84,133 @@ def interview(state: GraphState):
     return state
 
 
+# --- New nodes for free-form interview ---
+
+freeform_prompt = ChatPromptTemplate.from_template(
+    """You are a helpful AI assistant conducting a friendly and conversational 
+    interview to build a Responsible AI strategy.
+    Your ultimate goal is to understand the user's context. 
+    So far, you have had this conversation:
+
+{history}
+
+Based on this, ask additional questions to gather more information about the user. 
+The informaition should be related to the user's values the the user's understanding of AI to 
+help build a more useful responsible AI strategy.
+Before asking the any questions, tell user that you will stop asking questions any time
+they ask you to.
+Ask **as few questions as possible** to gather the information you need. The maximum amount of
+questions you can ask is five, **one** question at a time.
+After you have asked five questions, thank the user and wrap up 
+the conversation.
+If you have not yet asked five questions, but the user asked to stop the interview or expressed 
+unwillingness to answer, thank them and wrap up the conversation.
+Do that immediately and do not ask them any follow-up questions. You last message should contain the phrase 
+'The interviev is over, thank you for your time'.
+
+ Make sure to stay polite and respectful. If the user is not willing to ask further questions, 
+ thank them and wrap up the conversation. Do that immediately and do not ask them any
+ follow-up questions. You last message should contain the phrase 
+ 'The interviev is over, thank you for your time'.
+If the user expresses themselves in a rude or offensive manner, thank them and 
+wrap up the conversation in the same way with the last message being
+ 'The interview is over, thank you for your time'.
+"""
+)
+
+completion_check_prompt = ChatPromptTemplate.from_template(
+    """Based on the following conversation, determine if you have gathered all the necessary 
+    information to create a user profile.
+The required information is:
+1. Industry
+2. Geographical region
+3. Target audience
+4. Specific AI use-cases
+5. Key risks or organizational values
+
+Look at the last AI message. If it contain the phrase 'The interview is over, thank you for 
+your time', then it is complete.
+Respond with a single JSON object containing a single key "complete" with a boolean value. For example: {{"complete": true}}
+Do not add formatting or any extra symbols and make sure your answer is a valid JSON object, 
+since it will further be processed as such.
+
+Conversation:
+{history}
+"""
+)
+
+summarizer_prompt = ChatPromptTemplate.from_template(
+    """You are a summarization expert. Based on the following conversation, extract all  
+    information about the user's values and their understanding of AI. Format the output as a 
+    JSON object with keys "user_values" and "ai_understanding". If a piece of information 
+    is not available, set its value to "Not specified".
+    Make sure to analyze the whole conversation and include the most important points, 
+    yet keeping the summary short and concise.
+    Do not add formatting or any extra symbols and make sure your answer is a valid JSON object, 
+    since it will further be processed as such.
+
+
+Conversation:
+{history}
+
+Respond only with the JSON object.
+"""
+)
+
+
+def freeform_interview(state: GraphState) -> GraphState:
+    # If this is the first time we enter freeform, we need to build history.
+    if not state.conversation_history:
+        history = []
+        for i, answer in enumerate(state.answers):
+            history.append(AIMessage(content=QUESTIONS[i]))
+            history.append(HumanMessage(content=answer))
+        state.conversation_history = history
+        # Add a transitional message.
+        state.conversation_history.append(AIMessage(content="Thanks for that information. Let's talk in some more detail now."))
+
+    # Append user message to history (for subsequent turns)
+    if state.user_messages:
+        state.conversation_history.extend(state.user_messages)
+        state.user_messages = []
+
+    # Generate next question
+    history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+    next_q_prompt = freeform_prompt.format_prompt(history=history_str)
+    response = llm.invoke(next_q_prompt.to_messages())
+    
+    ai_message = AIMessage(content=response.content)
+    state.ai_messages = [ai_message]
+    state.conversation_history.append(ai_message)
+    
+    # Increment the question counter
+    state.freeform_question_count += 1
+    
+    return state
+
+
+def summarize_profile(state: GraphState) -> GraphState:
+    history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+    summarizer_request = summarizer_prompt.format_prompt(history=history_str)
+    response = llm.invoke(summarizer_request.to_messages())
+    try:
+        new_info = json.loads(response.content)
+        if state.profile:
+            state.profile.update(new_info)
+        else: # Should not happen
+            state.profile = new_info
+    except json.JSONDecodeError:
+        print("Error decoding profile JSON from LLM")
+        if state.profile is None:
+            state.profile = {}  # empty profile
+    
+    state.ai_messages = [AIMessage(content="Thanks! I've gathered all the necessary information. Now, I'll build a draft strategy for you.")]
+    return state
+
+
 # ───────────────────────── retriever node ───────────────────
 search_prompt = ChatPromptTemplate.from_messages([
-    ("system", "Generate 1–2 short search queries relevant to this profile. Return JSON list."),
+    ("system", "Generate 2 short search queries relevant to this profile. Return JSON list."),
     ("human", "{p}"),
 ])
 
@@ -95,7 +221,7 @@ def retriever(state: GraphState) -> GraphState:
         return state
 
     search_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Generate 1–2 short search queries relevant to this profile. Return JSON list."),
+        ("system", "Generate 2 short search queries relevant to this profile. Return JSON list."),
         ("human", "{p}"),
     ])
 
@@ -170,33 +296,93 @@ def reviewer(state: GraphState) -> GraphState:
 
 # ───────────────────────── graph build ───────────────────────
 
-def after_interview_condition(state: GraphState) -> str:
-    """Determines whether to proceed to retrieval or end the current graph run."""
-    if state.profile is not None:  # Interview complete, profile is set
-        return "retriever"
-    else: # Interview ongoing, current graph run effectively ends after interview node outputs question
+def route_interviews(state: GraphState) -> str:
+    """Routes to the correct interview stage."""
+    # If profile is created, the predefined interview is done.
+    if state.profile is not None:
+        return "freeform_interview"
+    else:
+        return "predefined_interview"
+
+def after_predefined_interview_condition(state: GraphState) -> str:
+    """Proceed to freeform interview after predefined questions, or end run to await user input."""
+    if state.profile is not None:  # Predefined interview complete
+        return "freeform_interview"
+    else: # Predefined interview ongoing
         return "__END__"
+
+def after_freeform_interview_condition(state: GraphState) -> str:
+    """Checks if the freeform interview is complete based on several conditions."""
+    # 1. Check if the question limit has been reached
+    if state.freeform_question_count >= 5:
+        return "summarize_profile"
+
+    # 2. Check if the user wants to stop
+    # The most recent user message is in the `user_messages` list before being appended to history
+    if state.user_messages:
+        last_user_message = state.user_messages[-1].content.lower()
+        stop_phrases = ["stop", "that's enough", "i don't want to answer", "quit", "exit"]
+        if any(phrase in last_user_message for phrase in stop_phrases):
+            return "summarize_profile"
+
+    # 3. Check if the LLM has decided to end the conversation
+    if not state.conversation_history:
+        return "__END__" # Should not happen in normal flow
+    
+    history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+    completion_check = completion_check_prompt.format_prompt(history=history_str)
+    response = llm.invoke(completion_check.to_messages())
+    try:
+        is_complete = json.loads(response.content).get("complete", False)
+        if is_complete:
+            return "summarize_profile"
+    except json.JSONDecodeError:
+        pass # Not complete, continue interview
+    
+    return "__END__"
+
 
 graph = StateGraph(GraphState)
 
-graph.add_node("interview", interview)
+# Add all nodes
+graph.add_node("predefined_interview", predefined_interview)
+graph.add_node("freeform_interview", freeform_interview)
+graph.add_node("summarize_profile", summarize_profile)
 graph.add_node("retriever", retriever)
 graph.add_node("writer", writer)
 graph.add_node("reviewer", reviewer)
 
-graph.set_entry_point("interview")
-
-# Conditional edge from interview
-graph.add_conditional_edges(
-    "interview",
-    after_interview_condition,
+# Set the entry point
+graph.set_conditional_entry_point(
+    route_interviews,
     {
-        "retriever": "retriever",
-        "__END__": END  # Use the imported END constant here
+        "predefined_interview": "predefined_interview",
+        "freeform_interview": "freeform_interview",
+    },
+)
+
+# Path for predefined questions
+graph.add_conditional_edges(
+    "predefined_interview",
+    after_predefined_interview_condition,
+    {
+        "freeform_interview": "freeform_interview",
+        "__END__": END
     }
 )
 
-# graph.add_edge("interview", "retriever") # Ensure no direct edge
+# Path for freeform interview
+graph.add_conditional_edges(
+    "freeform_interview",
+    after_freeform_interview_condition,
+    {
+        "summarize_profile": "summarize_profile",
+        "__END__": END,
+    },
+)
+
+# Connect the rest of the graph
+graph.add_edge("summarize_profile", "retriever")
 graph.add_edge("retriever", "writer")
 graph.add_edge("writer", "reviewer")
 
@@ -206,14 +392,17 @@ workflow = graph.compile()
 
 # ───────────────────────── CLI loop ─────────────────────────
 async def chat_loop():
-    initial_graph_input = GraphState() # Initialize with GraphState instance for the first call
+    print("Starting interview process...")
+    # Start with a clear state, but ensure essential lists and counters are initialized
+    state = {"user_messages": [], "answers": [], "freeform_question_count": 0} 
 
     # Initial invocation to get the first AI message (the first question)
-    # workflow.ainvoke is expected to return a dict-like representation of the state
-    state: Dict[str, Any] = await workflow.ainvoke(initial_graph_input)
+    state = await workflow.ainvoke(state)
 
     while True:
-        for m in state.get("ai_messages", []):
+        ai_messages = state.get("ai_messages", [])
+        for m in ai_messages:
+            # All messages in this list should be AIMessage objects
             print("AI:", m.content, "\n")
         state["ai_messages"] = []
 
@@ -222,10 +411,12 @@ async def chat_loop():
             print(state["strategy"])
             break
 
-        user = input("You: ").strip()
-        if user.lower() in {"quit", "exit"}:
+        user_input = input("You: ").strip()
+        if user_input.lower() in {"quit", "exit"}:
             break
-        state["user_messages"] = [HumanMessage(content=user)]
+        
+        # Pass the user message back into the state for the next invocation
+        state["user_messages"] = [HumanMessage(content=user_input)]
         state = await workflow.ainvoke(state)
 
 
