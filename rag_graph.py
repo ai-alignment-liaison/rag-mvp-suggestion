@@ -7,7 +7,7 @@ import torch
 if not hasattr(torch, "get_default_device"):
     torch.get_default_device = lambda: torch.device("cpu")
 
-import asyncio, json, os
+import asyncio, json, os, yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -23,6 +23,14 @@ from langgraph.graph import StateGraph, END
 import httpx
 
 load_dotenv()
+
+# ───────────────────────── load prompts ──────────────────────
+def load_prompts():
+    """Load prompts from YAML configuration file."""
+    with open("configurations/prompts.yaml", "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+prompts = load_prompts()
 
 # ───────────────────────── resources ─────────────────────────
 EMBED = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en", encode_kwargs={"normalize_embeddings": True})
@@ -86,76 +94,11 @@ def predefined_interview(state: GraphState):
 
 # --- New nodes for free-form interview ---
 
-freeform_prompt = ChatPromptTemplate.from_template(
-    """You are a helpful AI assistant conducting a friendly and conversational 
-    interview to build a Responsible AI strategy.
-    Your ultimate goal is to understand the user's context. 
-    So far, you have had this conversation:
+freeform_prompt = ChatPromptTemplate.from_template(prompts["freeform_interview"])
 
-{history}
+completion_check_prompt = ChatPromptTemplate.from_template(prompts["completion_check"])
 
-Based on this, ask additional questions to gather more information about the user. 
-The informaition should be related to the user's values the the user's understanding of AI to 
-help build a more useful responsible AI strategy.
-Before asking the any questions, tell user that you will stop asking questions any time
-they ask you to.
-Ask **as few questions as possible** to gather the information you need. The maximum amount of
-questions you can ask is five, **one** question at a time.
-After you have asked five questions, thank the user and wrap up 
-the conversation.
-If you have not yet asked five questions, but the user asked to stop the interview or expressed 
-unwillingness to answer, thank them and wrap up the conversation.
-Do that immediately and do not ask them any follow-up questions. You last message should contain the phrase 
-'The interviev is over, thank you for your time'.
-
- Make sure to stay polite and respectful. If the user is not willing to ask further questions, 
- thank them and wrap up the conversation. Do that immediately and do not ask them any
- follow-up questions. You last message should contain the phrase 
- 'The interviev is over, thank you for your time'.
-If the user expresses themselves in a rude or offensive manner, thank them and 
-wrap up the conversation in the same way with the last message being
- 'The interview is over, thank you for your time'.
-"""
-)
-
-completion_check_prompt = ChatPromptTemplate.from_template(
-    """Based on the following conversation, determine if you have gathered all the necessary 
-    information to create a user profile.
-The required information is:
-1. Industry
-2. Geographical region
-3. Target audience
-4. Specific AI use-cases
-5. Key risks or organizational values
-
-Look at the last AI message. If it contain the phrase 'The interview is over, thank you for 
-your time', then it is complete.
-Respond with a single JSON object containing a single key "complete" with a boolean value. For example: {{"complete": true}}
-Do not add formatting or any extra symbols and make sure your answer is a valid JSON object, 
-since it will further be processed as such.
-
-Conversation:
-{history}
-"""
-)
-
-summarizer_prompt = ChatPromptTemplate.from_template(
-    """You are a summarization expert. Based on the following conversation, extract all  
-    information about the user's values and their understanding of AI. Format the output as a 
-    JSON object with keys "user_values" and "ai_understanding". If a piece of information 
-    is not available, set its value to "Not specified".
-    Make sure to analyze the whole conversation and include the most important points, 
-    yet keeping the summary short and concise.
-    Do not add formatting or any extra symbols and make sure your answer is a valid JSON object, 
-    since it will further be processed as such.
-
-
-Conversation:
-{history}
-
-Respond only with the JSON object.
-"""
-)
+summarizer_prompt = ChatPromptTemplate.from_template(prompts["summarizer"])
 
 
 def freeform_interview(state: GraphState) -> GraphState:
@@ -210,7 +153,7 @@ def summarize_profile(state: GraphState) -> GraphState:
 
 # ───────────────────────── retriever node ───────────────────
 search_prompt = ChatPromptTemplate.from_messages([
-    ("system", "Generate 2 short search queries relevant to this profile. Return JSON list."),
+    ("system", prompts["search_system"]),
     ("human", "{p}"),
 ])
 
@@ -219,11 +162,6 @@ def retriever(state: GraphState) -> GraphState:
     # Skip if profile not yet collected (first few ticks)
     if state.profile is None:
         return state
-
-    search_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Generate 2 short search queries relevant to this profile. Return JSON list."),
-        ("human", "{p}"),
-    ])
 
     q = llm.invoke(search_prompt.format_prompt(p=json.dumps(state.profile, indent=2)).to_messages()).content
     try:
@@ -243,7 +181,7 @@ def retriever(state: GraphState) -> GraphState:
 
 # ───────────────────────── writer & refiner ──────────────────
 writer_prompt = ChatPromptTemplate.from_messages([
-    ("system", "Write a 700‑word actionable Responsible‑AI strategy. Cite as [S1]…"),
+    ("system", prompts["writer_system"]),
     ("human", "PROFILE:\n{prof}"),
     ("human", "EVIDENCES:\n{ev}"),
 ])
@@ -260,7 +198,7 @@ def writer(state: GraphState):
 
 # ───────────────────────── reviewer node ─────────────────────
 reviewer_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a meticulous editor. Review the following Responsible-AI strategy and refine it for clarity, conciseness, impact, and actionable insights. Ensure it directly addresses the user's profile and the provided evidence. Maintain a professional tone and the ~700-word length. Output only the improved strategy, including the original references section if it exists."),
+    ("system", prompts["reviewer_system"]),
     ("human", "PROFILE:\n{prof}"),
     ("human", "EVIDENCES:\n{ev}"),
     ("human", "CURRENT STRATEGY:\n{strat}"),

@@ -1,0 +1,25 @@
+Customer persona: a middle-aged white European man. Not tech-savvy, don't quite understand the AI, but heard about some cases of use in food industry. Owns a bakery and wants an AI assistant, which will take the customers' orders via voice while they are on the way to the bakery. Values customers' time and good service. Gets annoyed after 4-5 questions and refuses to talk further.
+
+AI: 1. What industry does your organisation operate in? 
+
+You: Food industry, I have a bakery
+AI: 2. In which region or geographical area do you primarily serve? 
+
+You: Amsterdam, the Netherlands
+AI: 3. Who are your main customers or target audience? 
+
+You: Workers from the nearby offices, who come in during the lunch break
+AI: 4. What specific AI use‑cases are you planning to implement? 
+
+You: I want an ai assistant, which takes orders via voice and sends them to the kitchen
+AI: 5. What key risks or organisational values should guide your approach? 
+
+You: First, client's personal data should be protected. Second, the assistant should be precise. I will lose a lot of clients if the assistant does not take their orders correctly
+
+I don't know much about AI. All I know is McDonalds tried something similar, and it was bad. I don't want that for myself. Currently we store the customers' data in a trusted third-party relational database, hashed. We also bought some safety certificate
+
+To gather feedback, we can create a questionnaire and send it to the customers to see what experience they had with the assistant. To ensure the assistant is friendly, we can set some rules. Or maybe just take the best model on a market   
+
+I guess, more professional tone is good. Aside from taking orders, maybe it can answer customers' questions regarding what is in the drink or what we have on sale today, stuff like this
+
+Sometimes an apology and a coupon will do, but if the customer is fuming, it's better to call the human manager. The assistant should know to do that. And yes, let them know it's an AI they are talking to

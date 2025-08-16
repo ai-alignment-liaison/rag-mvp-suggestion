@@ -1,85 +1,321 @@
-# RAG MVP Project
+# RAG MVP - Responsible AI Strategy Generator
 
-This project implements a Retrieval Augmented Generation (RAG) pipeline using LangGraph, ChromaDB, and OpenAI. It features a conversational AI that conducts a sequential, two-stage interview to understand a user's context and then generates a tailored Responsible AI strategy based on the conversation and a knowledge base of relevant documents.
+This project implements a comprehensive Retrieval Augmented Generation (RAG) system that conducts interactive interviews and generates personalized Responsible AI strategies. The system features a sophisticated orchestration pipeline using LangGraph, structured outputs with Pydantic validation, and robust error handling.
 
-## Prerequisites
+## 🎯 **Key Features**
 
-*   Python 3.10 or higher
-*   An OpenAI API Key
+- **🗣️ Interactive Interview System**: Two-stage interview (predefined + freeform questions)
+- **🔍 RAG-based Strategy Generation**: Uses MIT AI Risks database and research papers
+- **📋 Structured Outputs**: Pydantic schemas ensure reliable JSON responses
+- **🛡️ Robust Error Handling**: Comprehensive fallbacks and timeout protection
+- **⚙️ YAML Configuration**: Centralized prompt management
+- **📁 Automated File Output**: Saves strategies with timestamps and metadata
+- **🚫 Skip Functionality**: Users can skip to freeform interview anytime
 
-## Setup
+## 📁 **Project Structure**
 
-1.  **Clone the repository:**
-    ```bash
-    git clone git@github.com:ai-alignment-liaison/RAG_MVP_Suggestion.git
-    cd <your-repository-directory>
-    ```
+```
+RAG_MVP/
+├── main.py                    # 🚀 Main orchestration file
+├── rag_graph.py              # 📊 Original graph implementation
+├── ingestion_pipeline.py     # 📚 Data loading and processing
+├── requirements.txt          # 📦 All dependencies
+├── configurations/           
+│   └── prompts.yaml          # 💬 Centralized prompt templates
+├── papers/                   # 📄 PDF research papers
+├── vector_store/             # 🗄️ ChromaDB vector database
+├── output/                   # 📋 Generated strategy files
+├── .env                      # 🔐 Environment variables (create this)
+└── README.md                 # 📖 This file
+```
 
-2.  **Create and activate a virtual environment:**
+## 🔧 **Prerequisites**
 
-    *   Using `venv`:
-        ```bash
-        python3 -m venv rag_env
-        source rag_env/bin/activate
-        ```
-    *   Using `conda`:
-        ```bash
-        conda create -n rag_env python=3.10
-        conda activate rag_env
-        ```
+- **Python**: 3.10 or higher
+- **OpenAI API Key**: For GPT-4o-mini access
+- **Internet Connection**: For database loading and API calls
 
-3.  **Set up your OpenAI API Key:**
-    Create a `.env` file in the project's root directory and add your key:
-    ```env
-    OPENAI_API_KEY="your_openai_api_key_here"
-    ```
-4.  **Add the MIT AI Risks Google Sheet URL to the `.env` file:**
-    ```env
-    MIT_RISKS_SHEET_URL="https://docs.google.com/spreadsheets/d/1f3zgCMTUeqmJ2w2LyiXGo5-UzmrfswxJygbrqEvdOSs/edit?usp=sharing"
-    ```
+## 🚀 **Quick Start**
 
-5.  **Install dependencies:**
-    With your virtual environment active, run:
-    ```bash
-    pip install -r requirements.txt
-    ```
+### 1. **Setup Environment**
 
-## Running the Project
-
-The project consists of two main Python scripts: `ingestion_pipeline.py` and `rag_graph.py`.
-
-### 1. Data Ingestion (Optional)
-
-To create or update the vector database with your own documents, run the ingestion pipeline. The script processes PDFs from the `/papers` directory and data from the Google Sheet specified in your `.env` file. It then creates and stores their embeddings in a ChromaDB vector store inside the `vector_store/` directory.
-
-To run the ingestion pipeline:
 ```bash
+# Clone the repository
+git clone <your-repository-url>
+cd RAG_MVP
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. **Configure Environment Variables**
+
+Create a `.env` file in the root directory:
+
+```env
+# Required: OpenAI API Key
+OPENAI_API_KEY="your_openai_api_key_here"
+
+# Optional: MIT AI Risks Google Sheet URL
+MIT_RISKS_SHEET_URL="https://docs.google.com/spreadsheets/d/1f3zgCMTUeqmJ2w2LyiXGo5-UzmrfswxJygbrqEvdOSs/edit?usp=sharing"
+
+# Optional: Custom paths
+PAPERS_DIR="./papers"
+CHROMA_PERSIST_DIR="./vector_store"
+EMBED_MODEL="BAAI/bge-base-en"
+```
+
+### 3. **Run the System**
+
+```bash
+# Start the interactive system
+python main.py
+```
+
+## 🎮 **How to Use**
+
+### **Interview Process**
+
+1. **📋 Predefined Questions** (5 questions):
+   - Industry and region
+   - Target audience and use cases  
+   - Risk hypotheses and values
+   - **Skip option**: Type `skip` to jump to freeform interview
+
+2. **💬 Freeform Interview** (up to 5 questions):
+   - Conversational exploration of values and AI understanding
+   - **Stop commands**: "stop", "quit", "exit", "that's enough"
+   - Automatic completion when enough information is gathered
+
+3. **📝 Strategy Generation**:
+   - Evidence retrieval from databases
+   - Initial strategy draft
+   - Review and improvement
+   - File output with timestamp
+
+### **Sample Session**
+
+```
+🚀 Starting Responsible AI Strategy Generator
+==================================================
+
+📂 STEP 1: Loading databases...
+✅ Loaded 53 documents to MIT AI Risks database
+✅ Loaded 124 documents to Papers database
+
+🗣️ STEP 2: Starting customer interview...
+
+🤖 AI: 1. What industry does your organisation operate in?
+👤 You: Healthcare
+
+🤖 AI: 2. In which region or geographical area do you primarily serve? (Type 'skip' to jump to freeform interview)
+👤 You: skip
+
+🔄 User requested to skip to freeform interview
+🤖 AI: Thanks for that information. Let's talk in some more detail now.
+[... conversation continues ...]
+
+✅ STEP 8: Strategy generation complete!
+💾 Strategy saved to: output/responsible_ai_strategy_healthcare_20241223_143022.md
+```
+
+## 🏗️ **Architecture Overview**
+
+### **Main Components**
+
+1. **`main.py`** - Orchestration Engine
+   - Database loading with fallbacks
+   - Interview workflow management
+   - Strategy generation pipeline
+   - File output handling
+
+2. **Prompt Management** (`configurations/prompts.yaml`)
+   - Centralized prompt templates
+   - Easy modification without code changes
+   - Supports both simple and complex prompts
+
+3. **Data Pipeline** (`ingestion_pipeline.py`)
+   - PDF processing with PyPDF2
+   - Google Sheets integration
+   - ChromaDB vector storage
+   - Automatic metadata extraction
+
+### **Structured Output Schemas**
+
+```python
+# User profile summarization
+class UserProfileSummary(BaseModel):
+    user_values: str
+    ai_understanding: str
+
+# Search query generation  
+class SearchQueries(BaseModel):
+    queries: List[str] = Field(min_items=2, max_items=5)
+```
+
+### **Workflow Graph**
+
+```mermaid
+graph TD
+    A[Database Loading] --> B[Predefined Interview]
+    B --> C{Skip or Complete?}
+    C -->|Skip| D[Freeform Interview]
+    C -->|Complete| D
+    D --> E[Profile Summarization]
+    E --> F[Evidence Retrieval]
+    F --> G[Strategy Writing]
+    G --> H[Strategy Review]
+    H --> I[File Output]
+```
+
+## 🛠️ **Advanced Configuration**
+
+### **Custom Prompts**
+
+Edit `configurations/prompts.yaml` to customize:
+- Interview questions and flow
+- Search query generation
+- Strategy writing instructions
+- Review criteria
+
+### **Database Management**
+
+```bash
+# Reload databases with new content
 python ingestion_pipeline.py
-```
-If you skip this step, the application will use the existing `vector_store` directory.
 
-### 2. Run the Conversational AI
-
-To start the conversational AI, run the `rag_graph.py` script:
-
-```bash
-python rag_graph.py
+# The system automatically handles:
+# - Missing databases (graceful fallback)
+# - Network issues (retry mechanisms)
+# - Processing errors (skip problematic files)
 ```
 
-This will launch an interactive command-line interview process. The AI will guide you through two stages:
+### **Model Configuration**
 
-1.  **Predefined Interview:** The AI will ask five required questions to build a foundational user profile (industry, region, audience, use cases, and risk hypotheses).
-2.  **Free-Form Interview:** After the predefined questions, the AI will transition to a conversational interview to gather more nuanced information about your values and understanding of AI. This stage has a few rules:
-    *   It will ask a maximum of five questions.
-    *   The interview will stop automatically if you use phrases like "stop" or "exit."
+Modify in `main.py`:
+```python
+llm = ChatOpenAI(
+    model="gpt-4o-mini",      # Change model
+    temperature=0.3,          # Adjust creativity
+    http_client=httpx.Client(proxies=None)  # Proxy settings
+)
+```
 
-After the interview is complete, the AI will use the collected information and the knowledge base to generate and refine a comprehensive Responsible AI strategy for you.
+## 🔍 **Troubleshooting**
 
-## Project Structure
+### **Common Issues**
 
-*   `rag_graph.py`: The main script for the conversational AI, built with LangGraph.
-*   `ingestion_pipeline.py`: Ingests and processes documents into the ChromaDB vector store.
-*   `requirements.txt`: Lists all required Python dependencies.
-*   `vector_store/`: The directory where ChromaDB stores its vector data.
-*   `.env`: (You need to create this) For storing API keys and environment variables.
-*   `papers/`: A directory containing research papers in PDF format for ingestion. 
+1. **System hangs during workflow initialization**:
+   ```
+   🚀 Starting workflow (this may take a moment)...
+   [hangs here]
+   ```
+   **Solutions**:
+   - Check OPENAI_API_KEY is valid
+   - Verify internet connectivity
+   - Ensure model access permissions
+
+2. **ChromaDB telemetry warnings**:
+   ```
+   Failed to send telemetry event: capture() takes 1 positional argument...
+   ```
+   **Solution**: These are harmless and can be ignored
+
+3. **Dependency conflicts during installation**:
+   ```bash
+   # Try upgrading pip first
+   python -m pip install --upgrade pip
+   
+   # Install with verbose output
+   pip install -r requirements.txt -v
+   ```
+
+4. **PDF processing failures**:
+   - Ensure PDFs are not password-protected
+   - Check file permissions in `papers/` directory
+   - Large PDFs may take time to process
+
+### **Debug Mode**
+
+The system includes comprehensive logging:
+- Database loading status
+- Workflow step completion
+- Error messages with context
+- Timeout warnings
+
+## 📦 **Dependencies**
+
+### **Core Libraries**
+- **LangChain Ecosystem**: Core, OpenAI, HuggingFace, Chroma integrations
+- **LangGraph**: Workflow orchestration
+- **Pydantic**: Structured output validation
+- **ChromaDB**: Vector database storage
+
+### **Additional Libraries**
+- **PyTorch**: ML computations
+- **Transformers**: Embedding models
+- **PyPDF2**: Document processing
+- **PyYAML**: Configuration management
+
+See `requirements.txt` for complete list with versions.
+
+## 🎯 **Key Improvements Made**
+
+### **From Original Version**
+
+1. **🏗️ Complete Orchestration**: 
+   - Moved from separate scripts to unified `main.py`
+   - End-to-end workflow management
+   - Automatic file output
+
+2. **📋 Structured Outputs**:
+   - Pydantic schemas for reliable JSON
+   - No more JSON parsing errors
+   - Type-safe data handling
+
+3. **⚙️ Configuration Management**:
+   - YAML-based prompt management
+   - Easy customization without code changes
+   - Fallback prompt support
+
+4. **🛡️ Error Handling**:
+   - Comprehensive fallback mechanisms
+   - Timeout protection
+   - Graceful degradation
+
+5. **🚫 User Experience**:
+   - Skip functionality for interviews
+   - Debug logging for troubleshooting
+   - Progress indicators
+
+6. **📁 File Management**:
+   - Automatic output directory creation
+   - Timestamped filenames
+   - Structured markdown output
+
+## 🤝 **Contributing**
+
+1. **Add new prompts**: Edit `configurations/prompts.yaml`
+2. **Extend schemas**: Add Pydantic models in `main.py`
+3. **Custom processing**: Modify functions in respective modules
+4. **New databases**: Extend `ingestion_pipeline.py`
+
+## 📄 **License**
+
+MIT License - see LICENSE file for details.
+
+## 🆘 **Support**
+
+For issues or questions:
+1. Check troubleshooting section above
+2. Review error messages for specific guidance
+3. Ensure all dependencies are correctly installed
+4. Verify API keys and network connectivity
+
+---
+
+*Generated with ❤️ using RAG-based AI assistance*
