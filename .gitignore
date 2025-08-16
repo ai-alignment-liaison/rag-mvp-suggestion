@@ -3,3 +3,4 @@
 venv/
 venw_win/
 .cursor/
+__pycache__/
