@@ -41,7 +41,7 @@ RAG_MVP/
 
 ```bash
 # Clone the repository
-git clone <your-repository-url>
+git clone git@github.com:ai-alignment-liaison/rag-mvp-suggestion.git
 cd RAG_MVP
 
 # Create virtual environment
