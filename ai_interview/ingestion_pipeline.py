@@ -8,6 +8,16 @@ from typing import Dict, List
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+
+# Disable ChromaDB telemetry to suppress warnings
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
+# Disable HuggingFace tokenizers parallelism warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Suppress macOS malloc stack logging warnings
+os.environ["MallocStackLogging"] = "0"
+
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 # from sentence_transformers import SentenceTransformer # No longer directly used
 # from chromadb import PersistentClient # No longer directly used

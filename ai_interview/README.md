@@ -201,7 +201,7 @@ Modify in `main.py`:
 llm = ChatOpenAI(
     model="gpt-4o-mini",      # Change model
     temperature=0.3,          # Adjust creativity
-    http_client=httpx.Client(proxies=None)  # Proxy settings
+# Removed http_client parameter for compatibility
 )
 ```
 
@@ -219,13 +219,25 @@ llm = ChatOpenAI(
    - Verify internet connectivity
    - Ensure model access permissions
 
-2. **ChromaDB telemetry warnings**:
+2. **ChromaDB telemetry warnings** (FIXED):
    ```
    Failed to send telemetry event: capture() takes 1 positional argument...
    ```
-   **Solution**: These are harmless and can be ignored
+   **Solution**: ChromaDB telemetry is now automatically disabled to prevent these warnings
 
-3. **Dependency conflicts during installation**:
+3. **HuggingFace tokenizers warnings** (FIXED):
+   ```
+   huggingface/tokenizers: The current process just got forked, after parallelism has already been used...
+   ```
+   **Solution**: Tokenizers parallelism is automatically disabled to prevent fork conflicts
+
+4. **macOS malloc stack logging warnings** (FIXED):
+   ```
+   Python(12183) MallocStackLogging: can't turn off malloc stack logging...
+   ```
+   **Solution**: macOS memory debugging warnings are automatically suppressed
+
+5. **Dependency conflicts during installation**:
    ```bash
    # Try upgrading pip first
    python -m pip install --upgrade pip
@@ -234,7 +246,7 @@ llm = ChatOpenAI(
    pip install -r requirements.txt -v
    ```
 
-4. **PDF processing failures**:
+6. **PDF processing failures**:
    - Ensure PDFs are not password-protected
    - Check file permissions in `papers/` directory
    - Large PDFs may take time to process

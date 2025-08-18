@@ -13,6 +13,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from dotenv import load_dotenv
+
+# Disable ChromaDB telemetry to suppress warnings
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
+# Disable HuggingFace tokenizers parallelism warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Suppress macOS malloc stack logging warnings
+os.environ["MallocStackLogging"] = "0"
+
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
@@ -20,7 +30,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage
 import langgraph
 from langgraph.graph import StateGraph, END
-import httpx
+# httpx removed - no longer needed for OpenAI client
 
 load_dotenv()
 
@@ -39,8 +49,7 @@ risks = Chroma(collection_name="mit_ai_risks", persist_directory=str(COL_DIR), e
 papers = Chroma(collection_name="responsible_ai_papers", persist_directory=str(COL_DIR), embedding_function=EMBED)
 llm = ChatOpenAI(
     model="gpt-4o-mini", 
-    temperature=0.3,
-    http_client=httpx.Client(proxies=None)
+    temperature=0.3
 )
 
 
