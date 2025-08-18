@@ -18,13 +18,23 @@ if not hasattr(torch, "get_default_device"):
     torch.get_default_device = lambda: torch.device("cpu")
 
 from dotenv import load_dotenv
+
+# Disable ChromaDB telemetry to suppress warnings
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
+# Disable HuggingFace tokenizers parallelism warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Suppress macOS malloc stack logging warnings
+os.environ["MallocStackLogging"] = "0"
+
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage
 from langgraph.graph import StateGraph, END
-import httpx
+# httpx removed - no longer needed for OpenAI client
 
 # Import ingestion functions
 try:
@@ -89,8 +99,7 @@ COL_DIR.mkdir(parents=True, exist_ok=True)
 try:
     llm = ChatOpenAI(
         model="gpt-4o-mini", 
-        temperature=0.3,
-        http_client=httpx.Client(proxies=None)
+        temperature=0.3
     )
 except Exception as e:
     print(f"Error: Could not initialize OpenAI client: {e}")
@@ -718,7 +727,7 @@ async def main():
     
     # Step 1: Load databases
     print("\n📂 STEP 1: Loading databases...")
-    print("ℹ️  Note: ChromaDB telemetry warnings are harmless and can be ignored.")
+    print("ℹ️  Note: Warning suppressions enabled (ChromaDB telemetry, HuggingFace parallelism, macOS malloc).")
     databases_available = {
         "risks": load_mit_risks_database(),
         "papers": load_papers_database()
