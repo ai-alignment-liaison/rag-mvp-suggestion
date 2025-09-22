@@ -37,13 +37,12 @@ from langgraph.graph import StateGraph, END
 # httpx removed - no longer needed for OpenAI client
 
 # Import ingestion functions
-try:
-    from ingestion_pipeline import load_mit_sheet, row_to_docs, pdf_to_docs, PAPERS_DIR, CHROMA_PERSIST_DIR, EMBED
-except ImportError as e:
-    print(f"Warning: Could not import ingestion_pipeline: {e}")
-    print("Some data loading features may not work.")
-    PAPERS_DIR = Path("./papers")
-    CHROMA_PERSIST_DIR = Path("./vector_store")
+from ingestion_pipeline import load_mit_sheet, row_to_docs, pdf_to_docs, PAPERS_DIR, CHROMA_PERSIST_DIR, EMBED
+
+
+# Import questionnaire transformer
+from questionnaire_transformer import transform_ui_data_to_rag_profile, get_questionnaire_context_string
+
 
 load_dotenv()
 
@@ -86,6 +85,83 @@ def load_prompts():
 
 prompts = load_prompts()
 
+# ───────────────────────── Helper Functions ─────────────────
+def get_enhanced_conversation_history(state: GraphState) -> str:
+    """Get conversation history enhanced with questionnaire context if available."""
+    history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+    
+    if state.questionnaire_context:
+        return f"""QUESTIONNAIRE CONTEXT:
+{state.questionnaire_context}
+
+CONVERSATION HISTORY:
+{history_str}"""
+    else:
+        return history_str
+
+def create_personalized_opening(questionnaire_context: str, profile: Dict[str, Any]) -> str:
+    """Create a personalized opening message using questionnaire data."""
+    try:
+        # Access the questionnaire data directly - it should be in external_questionnaire_data
+        # For now, parse basic info from the profile if available
+        org_name = profile.get('organization_name', '') if profile else ''
+        industry = profile.get('industry', '') if profile else ''
+        product_info = profile.get('product_name', '') or profile.get('elevator_pitch', '') if profile else ''
+        key_values = profile.get('org_values', []) if profile else []
+        compliance_drivers = profile.get('compliance_drivers', []) if profile else []
+        
+        # Build personalized message
+        message_parts = []
+        
+        # Opening with organization context
+        if org_name and industry:
+            message_parts.append(f"Thank you for completing the comprehensive questionnaire! I can see that {org_name} operates in the {industry.lower()} sector.")
+        elif org_name:
+            message_parts.append(f"Thank you for completing the comprehensive questionnaire! I have detailed information about {org_name}.")
+        elif industry:
+            message_parts.append(f"Thank you for completing the comprehensive questionnaire! I can see you're working in the {industry.lower()} industry.")
+        else:
+            message_parts.append("Thank you for completing the comprehensive questionnaire! I have detailed information about your organization and project.")
+        
+        # Add product context if available
+        if product_info:
+            message_parts.append(f"I understand you're developing {product_info.lower()}.")
+        
+        # Add values context
+        if key_values and len(key_values) > 0:
+            if len(key_values) == 1:
+                message_parts.append(f"I noted that {key_values[0]} is a key priority for your organization.")
+            elif len(key_values) == 2:
+                message_parts.append(f"I noted that {key_values[0]} and {key_values[1]} are key priorities for your organization.")
+            else:
+                values_str = ", ".join(key_values[:2]) + f", and {key_values[2]}"
+                message_parts.append(f"I noted that {values_str} are key priorities for your organization.")
+        
+        # Add compliance context
+        if compliance_drivers and len(compliance_drivers) > 0:
+            if len(compliance_drivers) == 1:
+                message_parts.append(f"You also need to address {compliance_drivers[0]} compliance requirements.")
+            elif len(compliance_drivers) == 2:
+                message_parts.append(f"You also need to address {compliance_drivers[0]} and {compliance_drivers[1]} compliance requirements.")
+            else:
+                compliance_str = ", ".join(compliance_drivers[:2]) + f", and {compliance_drivers[2]}"
+                message_parts.append(f"You also need to address {compliance_str} compliance requirements.")
+        
+        # Transition to deeper conversation
+        message_parts.append("\nBased on this context, I'd like to explore some specific aspects of your responsible AI implementation. Let me start with a key question:")
+        message_parts.append("\nWhat are the main challenges or concerns you anticipate in ensuring your AI system aligns with your organization's values while meeting your compliance requirements?")
+        
+        return "\n\n".join(message_parts)
+        
+    except Exception as e:
+        print(f"Error creating personalized opening: {e}")
+        # Fallback to generic message
+        return """Thank you for completing the comprehensive questionnaire! I have detailed information about your organization, values, compliance requirements, and technical specifications.
+
+Based on your responses, I can see this is a sophisticated project with specific needs. Let me ask some follow-up questions to ensure I fully understand your context and can create the most effective Responsible AI strategy for your situation.
+
+To start: What specific challenges or concerns do you have about implementing responsible AI practices in your current context?"""
+
 # ───────────────────────── Resources ─────────────────────────
 try:
     EMBED = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en", encode_kwargs={"normalize_embeddings": True})
@@ -98,8 +174,9 @@ COL_DIR.mkdir(parents=True, exist_ok=True)
 
 try:
     llm = ChatOpenAI(
-        model="gpt-4o-mini", 
-        temperature=0.3
+        model="gpt-5-mini", 
+        #temperature=0.5,
+        http_client=httpx.Client(proxies=None)
     )
 except Exception as e:
     print(f"Error: Could not initialize OpenAI client: {e}")
@@ -118,6 +195,9 @@ class GraphState:
     strategy: Optional[str] = None
     freeform_question_count: int = 0
     databases_available: Dict[str, bool] = field(default_factory=lambda: {"risks": False, "papers": False})
+    # New field for external questionnaire data
+    external_questionnaire_data: Optional[Dict[str, Any]] = None
+    questionnaire_context: Optional[str] = None
 
 # ───────────────────────── Data Loading Functions ─────────────
 def load_mit_risks_database() -> bool:
@@ -219,69 +299,51 @@ def load_papers_database() -> bool:
         return False
 
 # ───────────────────────── Interview Functions ────────────────
-QUESTIONS = [
-    "1. What industry does your organisation operate in?",
-    "2. In which region or geographical area do you primarily serve?",
-    "3. Who are your main customers or target audience?",
-    "4. What specific AI use‑cases are you planning to implement?",
-    "5. What key risks or organisational values should guide your approach?",
-]
-
 def predefined_interview(state: GraphState):
-    """Handle predefined interview questions with skip functionality."""
+    """Handle predefined interview questions with skip functionality.
+    
+    NEW: If external questionnaire data is available, use that instead of asking questions.
+    """
     try:
-        # Record user's latest answer
-        if state.user_messages:
-            if state.answers is None:
-                state.answers = []
+        # NEW: Check if we have external questionnaire data from UI
+        if state.external_questionnaire_data:
+            print("📋 Using external questionnaire data from UI system...")
             
-            user_response = state.user_messages[0].content.strip()
+            # Transform UI data to RAG profile format
+            transformed_profile = transform_ui_data_to_rag_profile(state.external_questionnaire_data)
+            state.profile = transformed_profile
             
-            # Check for skip command
-            if user_response.lower() == "skip":
-                print("🔄 User requested to skip to freeform interview")
-                # Fill remaining answers with "Not specified"
-                while len(state.answers) < 5:
-                    state.answers.append("Not specified")
-                # Create basic profile
-                state.profile = {
-                    "industry": state.answers[0] if len(state.answers) > 0 else "Not specified",
-                    "region": state.answers[1] if len(state.answers) > 1 else "Not specified", 
-                    "audience": state.answers[2] if len(state.answers) > 2 else "Not specified",
-                    "use_cases": state.answers[3] if len(state.answers) > 3 else "Not specified",
-                    "risk_hypotheses": state.answers[4] if len(state.answers) > 4 else "Not specified",
-                }
-                state.user_messages = []
-                state.ai_messages = []
-                return state
-            
-            state.answers.append(user_response)
-            state.user_messages = []
+            # Create context string for freeform interview
+            state.questionnaire_context = get_questionnaire_context_string(state.external_questionnaire_data)
 
-        current_answers = state.answers if state.answers is not None else []
+            # Persist artifacts to logging/*.txt for debugging/inspection
+            try:
+                logging_dir = Path("logging")
+                logging_dir.mkdir(parents=True, exist_ok=True)
 
-        if len(current_answers) >= 5:  # Finished
-            ind, reg, aud, use, risk = current_answers
-            state.profile = {
-                "industry": ind, "region": reg, "audience": aud,
-                "use_cases": use, "risk_hypotheses": risk,
-            }
-            state.ai_messages = []
-        else:
-            next_q = QUESTIONS[len(current_answers)]
-            skip_hint = " (Type 'skip' to jump to freeform interview)" if len(current_answers) > 0 else ""
-            state.ai_messages = [AIMessage(content=next_q + skip_hint)]
+                # Write transformed profile as pretty JSON
+                with open(logging_dir / "transformed_profile.txt", "w", encoding="utf-8") as f:
+                    f.write(json.dumps(transformed_profile, indent=2, ensure_ascii=False))
+
+                # Write questionnaire context string
+                with open(logging_dir / "questionnaire_context.txt", "w", encoding="utf-8") as f:
+                    f.write(state.questionnaire_context or "")
+            except Exception as log_err:
+                print(f"⚠️  Could not write logging artifacts: {log_err}")
             
-        return state
+            # Set welcoming message for freeform interview
+            state.ai_messages = [AIMessage(content="""Thank you for completing the comprehensive questionnaire! I have detailed information about your organization, values, compliance requirements, and technical specifications.
+
+            Based on your responses, I can see this is a sophisticated project with specific needs. Let me ask some follow-up questions to ensure I fully understand your context and can create the most effective Responsible AI strategy for your situation.
+
+            To start: What specific challenges or concerns do you have about implementing responsible AI practices in your current context?""")]
+            
+            print(f"✅ Successfully processed questionnaire data with {len(transformed_profile)} sections")
+            return state
         
     except Exception as e:
         print(f"Error in predefined interview: {e}")
-        # Fallback: create minimal profile and continue
-        state.profile = {"industry": "Not specified", "region": "Not specified", 
-                        "audience": "Not specified", "use_cases": "Not specified", 
-                        "risk_hypotheses": "Not specified"}
-        state.ai_messages = []
-        return state
+        sys.exit(1)
 
 # Create prompt templates with error handling
 try:
@@ -297,28 +359,41 @@ except Exception as e:
     search_llm = None
 
 def freeform_interview(state: GraphState) -> GraphState:
-    """Handle freeform interview phase."""
+    """Handle freeform interview phase.
+    
+    NEW: Enhanced with questionnaire context for better conversation.
+    """
     try:
-        # Build history on first entry
+        # Build conversation history on first entry  
         if not state.conversation_history:
-            history = []
-            for i, answer in enumerate(state.answers or []):
-                if i < len(QUESTIONS):
-                    history.append(AIMessage(content=QUESTIONS[i]))
-                    history.append(HumanMessage(content=answer))
-            state.conversation_history = history
-            state.conversation_history.append(AIMessage(content="Thanks for that information. Let's talk in some more detail now."))
+            state.conversation_history = []
+            
+            if state.questionnaire_context:
+                print("📋 Enhanced freeform interview mode with questionnaire context")
+                
+                # Create a personalized opening message using questionnaire context
+                personalized_opening = create_personalized_opening(state.questionnaire_context, state.profile)
+                
+                state.conversation_history.append(
+                    AIMessage(content=personalized_opening)
+                )
+            else:
+                # FALLBACK: Minimal mode without questionnaire context
+                print("⚠️  Starting basic interview mode - no questionnaire context available")
+                state.conversation_history.append(
+                    AIMessage(content="Let's discuss your AI project and responsible AI needs...")
+                )
 
         # Append user message to history
         if state.user_messages:
             state.conversation_history.extend(state.user_messages)
             state.user_messages = []
 
-        # Generate next question
-        history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+        # Generate next question with enhanced context
+        enhanced_history = get_enhanced_conversation_history(state)
         
         try:
-            next_q_prompt = freeform_prompt.format_prompt(history=history_str)
+            next_q_prompt = freeform_prompt.format_prompt(history=enhanced_history)
             response = llm.invoke(next_q_prompt.to_messages())
             ai_message = AIMessage(content=response.content)
         except Exception as e:
@@ -337,9 +412,13 @@ def freeform_interview(state: GraphState) -> GraphState:
         return state
 
 def summarize_profile(state: GraphState) -> GraphState:
-    """Summarize user profile from conversation using structured output."""
+    """Summarize user profile from conversation using structured output.
+    
+    NEW: Enhanced with questionnaire context for better summarization.
+    """
     try:
-        history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+        # Get enhanced conversation history (includes questionnaire context if available)
+        enhanced_history = get_enhanced_conversation_history(state)
         
         try:
             if summarizer_llm:
@@ -347,8 +426,8 @@ def summarize_profile(state: GraphState) -> GraphState:
                 summarizer_prompt_text = prompts.get("summarizer", 
                     "Based on the following conversation, extract the user's values and their understanding of AI.")
                 
-                # Create the prompt for structured output
-                full_prompt = f"{summarizer_prompt_text}\n\nConversation:\n{history_str}"
+                # NEW: Use enhanced history that includes questionnaire context
+                full_prompt = f"{summarizer_prompt_text}\n\nConversation:\n{enhanced_history}"
                 
                 # Get structured response
                 summary_response = summarizer_llm.invoke(full_prompt)
@@ -359,8 +438,12 @@ def summarize_profile(state: GraphState) -> GraphState:
                     "ai_understanding": summary_response.ai_understanding
                 }
                 
+                # NEW: If we already have rich questionnaire data, merge carefully
                 if state.profile:
+                    # Preserve existing rich data and add conversation insights
                     state.profile.update(new_info)
+                    if "_conversation_insights" not in state.profile:
+                        state.profile["_conversation_insights"] = new_info
                 else:
                     state.profile = new_info
                     
@@ -369,13 +452,16 @@ def summarize_profile(state: GraphState) -> GraphState:
             else:
                 # Fallback to regular LLM if structured output failed to initialize
                 print("⚠️  Using fallback summarization method")
-                fallback_prompt = f"Based on the following conversation, extract the user's values and AI understanding as JSON:\n\nConversation:\n{history_str}\n\nRespond with JSON containing 'user_values' and 'ai_understanding' keys."
+                fallback_prompt = f"Based on the following conversation, extract the user's values and AI understanding as JSON:\n\nConversation:\n{enhanced_history}\n\nRespond with JSON containing 'user_values' and 'ai_understanding' keys."
                 
                 response = llm.invoke(fallback_prompt)
                 new_info = json.loads(response.content)
                 
+                # NEW: Handle rich questionnaire data in fallback mode too
                 if state.profile:
                     state.profile.update(new_info)
+                    if "_conversation_insights" not in state.profile:
+                        state.profile["_conversation_insights"] = new_info
                 else:
                     state.profile = new_info
                 
@@ -502,7 +588,7 @@ def writer(state: GraphState):
         ])
 
         refs = [f"[S{i + 1}] {e.get('metadata', {}).get('title', 'Unknown')[:80]}" for i, e in enumerate(state.evidences)]
-        ev_snips = "\n".join(f"[S{i + 1}] {e['content'][:250]}…" for i, e in enumerate(state.evidences))
+        ev_snips = "\n".join(f"[S{i + 1}] {e['content'][:250]}…" for i, e in enumerate(state.evidences))   # this is a flawed solution, because the writer does not get the full context, but we'll !FIX IT LATER!
         
         try:
             draft = llm.invoke(
@@ -581,18 +667,12 @@ def route_interviews(state: GraphState) -> str:
     else:
         return "predefined_interview"
 
-def after_predefined_interview_condition(state: GraphState) -> str:
-    """Decide next step after predefined interview."""
-    if state.profile is not None:
-        return "freeform_interview"
-    else:
-        return "__END__"
 
 def after_freeform_interview_condition(state: GraphState) -> str:
     """Check if freeform interview should continue."""
     try:
         # Check question limit
-        if state.freeform_question_count >= 5:
+        if state.freeform_question_count >= 25:
             return "summarize_profile"
 
         # Check for stop request
@@ -639,14 +719,8 @@ def create_workflow(databases_available: Dict[str, bool]) -> StateGraph:
         )
 
         # Define edges
-        graph.add_conditional_edges(
-            "predefined_interview",
-            after_predefined_interview_condition,
-            {
-                "freeform_interview": "freeform_interview",
-                "__END__": END
-            }
-        )
+        # Direct edge since predefined_interview always creates a profile
+        graph.add_edge("predefined_interview", "freeform_interview")
 
         graph.add_conditional_edges(
             "freeform_interview",
@@ -720,10 +794,19 @@ def save_strategy_to_file(strategy: str, profile: Dict[str, Any]) -> str:
             return ""
 
 # ───────────────────────── Main Orchestration ─────────────────
-async def main():
-    """Main orchestration function."""
+async def main(external_questionnaire_data=None):
+    """Main orchestration function.
+    
+    NEW: Accepts optional external questionnaire data from UI system.
+    
+    Args:
+        external_questionnaire_data: Dict containing UI questionnaire responses
+    """
     print("🚀 Starting Responsible AI Strategy Generator")
     print("=" * 50)
+    
+    if external_questionnaire_data:
+        print("📋 External questionnaire data provided - enhanced mode enabled!")
     
     # Step 1: Load databases
     print("\n📂 STEP 1: Loading databases...")
@@ -737,7 +820,10 @@ async def main():
         print("⚠️  No databases could be loaded. Proceeding with interview only.")
     
     # Step 2-7: Run interview and strategy generation
-    print("\n🗣️  STEP 2: Starting customer interview...")
+    if external_questionnaire_data:
+        print("\n🗣️  STEP 2: Starting enhanced interview with questionnaire data...")
+    else:
+        print("\n🗣️  STEP 2: Starting customer interview...")
     
     try:
         # Initialize workflow
@@ -751,7 +837,8 @@ async def main():
             "user_messages": [], 
             "answers": [], 
             "freeform_question_count": 0,
-            "databases_available": databases_available
+            "databases_available": databases_available,
+            "external_questionnaire_data": external_questionnaire_data  # NEW: Add external data
         }
         print("✅ State initialized successfully")
 
@@ -816,6 +903,43 @@ async def main():
         print("Stack trace:")
         traceback.print_exc()
         print("\nThe process encountered an error, but any partial results may still be useful.")
+
+# NEW: Additional helper function for external integrations
+async def run_with_questionnaire_data(questionnaire_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the RAG system with external questionnaire data.
+    
+    This function is designed to be called by API integrations.
+    
+    Args:
+        questionnaire_data: Dict containing UI questionnaire responses
+        
+    Returns:
+        Dict containing the final state with strategy and profile
+    """
+    print("🔗 Starting RAG system with external questionnaire data...")
+    
+    # Load databases
+    databases_available = {
+        "risks": load_mit_risks_database(),
+        "papers": load_papers_database()
+    }
+    
+    # Initialize workflow
+    workflow = create_workflow(databases_available)
+    
+    # Initialize state with external data
+    state = {
+        "user_messages": [], 
+        "answers": [], 
+        "freeform_question_count": 0,
+        "databases_available": databases_available,
+        "external_questionnaire_data": questionnaire_data
+    }
+    
+    # Run initial processing (this will process questionnaire data)
+    state = await workflow.ainvoke(state)
+    
+    return state
 
 if __name__ == "__main__":
     try:
