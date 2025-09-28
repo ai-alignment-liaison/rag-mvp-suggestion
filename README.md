@@ -20,7 +20,7 @@ RAG_MVP/
 ├── rag_graph.py              # 📊 Original graph implementation
 ├── ingestion_pipeline.py     # 📚 Data loading and processing
 ├── requirements.txt          # 📦 All dependencies
-├── configurations/           
+├── configurations/
 │   └── prompts.yaml          # 💬 Centralized prompt templates
 ├── papers/                   # 📄 PDF research papers
 ├── vector_store/             # 🗄️ ChromaDB vector database
@@ -82,7 +82,7 @@ python main.py
 
 1. **📋 Predefined Questions** (5 questions):
    - Industry and region
-   - Target audience and use cases  
+   - Target audience and use cases
    - Risk hypotheses and values
    - **Skip option**: Type `skip` to jump to freeform interview
 
@@ -152,7 +152,7 @@ class UserProfileSummary(BaseModel):
     user_values: str
     ai_understanding: str
 
-# Search query generation  
+# Search query generation
 class SearchQueries(BaseModel):
     queries: List[str] = Field(min_items=2, max_items=5)
 ```
@@ -241,7 +241,7 @@ llm = ChatOpenAI(
    ```bash
    # Try upgrading pip first
    python -m pip install --upgrade pip
-   
+
    # Install with verbose output
    pip install -r requirements.txt -v
    ```
@@ -279,7 +279,7 @@ See `requirements.txt` for complete list with versions.
 
 ### **From Original Version**
 
-1. **🏗️ Complete Orchestration**: 
+1. **🏗️ Complete Orchestration**:
    - Moved from separate scripts to unified `main.py`
    - End-to-end workflow management
    - Automatic file output

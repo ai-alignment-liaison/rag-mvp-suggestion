@@ -78,7 +78,7 @@ Transparency is essential for building trust. Keep customers informed about the 
 
 ## Conclusion
 
-Implementing an AI assistant in your bakery can significantly enhance efficiency and customer service. By following this actionable strategy, you can ensure that your AI system operates responsibly, respects customer privacy, and fosters trust within your community. 
+Implementing an AI assistant in your bakery can significantly enhance efficiency and customer service. By following this actionable strategy, you can ensure that your AI system operates responsibly, respects customer privacy, and fosters trust within your community.
 
 Key steps include understanding the legal framework, defining clear purposes, ensuring reliability, and maintaining open communication with customers. By taking these actions, you will not only improve your bakery's operations but also cultivate a positive relationship with your customers, ensuring they feel valued and secure in their interactions with your business.
 
