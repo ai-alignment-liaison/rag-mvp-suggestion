@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 import torch
+
 if not hasattr(torch, "get_default_device"):
     torch.get_default_device = lambda: torch.device("cpu")
 
-import asyncio, json, os, yaml
+import asyncio
+import json
+import os
+import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -28,41 +32,49 @@ from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage
-import langgraph
 from langgraph.graph import StateGraph, END
 # httpx removed - no longer needed for OpenAI client
 
 load_dotenv()
 
+
 # ───────────────────────── load prompts ──────────────────────
 def load_prompts():
     """Load prompts from YAML configuration file."""
-    with open("configurations/prompts.yaml", "r", encoding="utf-8") as f:
+    with open("configurations/prompts.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
 
 prompts = load_prompts()
 
 # ───────────────────────── resources ─────────────────────────
-EMBED = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en", encode_kwargs={"normalize_embeddings": True})
-COL_DIR = Path("./vector_store")
-risks = Chroma(collection_name="mit_ai_risks", persist_directory=str(COL_DIR), embedding_function=EMBED)
-papers = Chroma(collection_name="responsible_ai_papers", persist_directory=str(COL_DIR), embedding_function=EMBED)
-llm = ChatOpenAI(
-    model="gpt-4o-mini", 
-    temperature=0.3
+EMBED = HuggingFaceEmbeddings(
+    model_name="BAAI/bge-base-en", encode_kwargs={"normalize_embeddings": True}
 )
+COL_DIR = Path("./data/vector_store")
+risks = Chroma(
+    collection_name="mit_ai_risks",
+    persist_directory=str(COL_DIR),
+    embedding_function=EMBED,
+)
+papers = Chroma(
+    collection_name="responsible_ai_papers",
+    persist_directory=str(COL_DIR),
+    embedding_function=EMBED,
+)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 
 
 # ───────────────────────── state dataclass ───────────────────
 @dataclass
 class GraphState:
-    conversation_history: List[Union[AIMessage, HumanMessage]] = field(default_factory=list)
-    ai_messages: List[AIMessage] = field(default_factory=list)
-    user_messages: List[HumanMessage] = field(default_factory=list)
-    answers: List[str] = field(default_factory=list)  # For predefined
-    profile: Optional[Dict[str, Any]] = None
-    evidences: Optional[List[Dict]] = None
-    strategy: Optional[str] = None
+    conversation_history: list[AIMessage | HumanMessage] = field(default_factory=list)
+    ai_messages: list[AIMessage] = field(default_factory=list)
+    user_messages: list[HumanMessage] = field(default_factory=list)
+    answers: list[str] = field(default_factory=list)  # For predefined
+    profile: dict[str, Any] | None = None
+    evidences: list[dict] | None = None
+    strategy: str | None = None
     freeform_question_count: int = 0
 
 
@@ -91,8 +103,11 @@ def predefined_interview(state: GraphState):
     if len(current_answers) >= 5:  # finished
         ind, reg, aud, use, risk = current_answers
         state.profile = {
-            "industry": ind, "region": reg, "audience": aud,
-            "use_cases": use, "risk_hypotheses": risk,
+            "industry": ind,
+            "region": reg,
+            "audience": aud,
+            "use_cases": use,
+            "risk_hypotheses": risk,
         }
         state.ai_messages = []
     else:
@@ -119,7 +134,11 @@ def freeform_interview(state: GraphState) -> GraphState:
             history.append(HumanMessage(content=answer))
         state.conversation_history = history
         # Add a transitional message.
-        state.conversation_history.append(AIMessage(content="Thanks for that information. Let's talk in some more detail now."))
+        state.conversation_history.append(
+            AIMessage(
+                content="Thanks for that information. Let's talk in some more detail now."
+            )
+        )
 
     # Append user message to history (for subsequent turns)
     if state.user_messages:
@@ -127,44 +146,56 @@ def freeform_interview(state: GraphState) -> GraphState:
         state.user_messages = []
 
     # Generate next question
-    history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+    history_str = "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}"
+        for m in state.conversation_history
+    )
     next_q_prompt = freeform_prompt.format_prompt(history=history_str)
     response = llm.invoke(next_q_prompt.to_messages())
-    
+
     ai_message = AIMessage(content=response.content)
     state.ai_messages = [ai_message]
     state.conversation_history.append(ai_message)
-    
+
     # Increment the question counter
     state.freeform_question_count += 1
-    
+
     return state
 
 
 def summarize_profile(state: GraphState) -> GraphState:
-    history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+    history_str = "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}"
+        for m in state.conversation_history
+    )
     summarizer_request = summarizer_prompt.format_prompt(history=history_str)
     response = llm.invoke(summarizer_request.to_messages())
     try:
         new_info = json.loads(response.content)
         if state.profile:
             state.profile.update(new_info)
-        else: # Should not happen
+        else:  # Should not happen
             state.profile = new_info
     except json.JSONDecodeError:
         print("Error decoding profile JSON from LLM")
         if state.profile is None:
             state.profile = {}  # empty profile
-    
-    state.ai_messages = [AIMessage(content="Thanks! I've gathered all the necessary information. Now, I'll build a draft strategy for you.")]
+
+    state.ai_messages = [
+        AIMessage(
+            content="Thanks! I've gathered all the necessary information. Now, I'll build a draft strategy for you."
+        )
+    ]
     return state
 
 
 # ───────────────────────── retriever node ───────────────────
-search_prompt = ChatPromptTemplate.from_messages([
-    ("system", prompts["search_system"]),
-    ("human", "{p}"),
-])
+search_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", prompts["search_system"]),
+        ("human", "{p}"),
+    ]
+)
 
 
 def retriever(state: GraphState) -> GraphState:
@@ -172,46 +203,66 @@ def retriever(state: GraphState) -> GraphState:
     if state.profile is None:
         return state
 
-    q = llm.invoke(search_prompt.format_prompt(p=json.dumps(state.profile, indent=2)).to_messages()).content
+    q = llm.invoke(
+        search_prompt.format_prompt(p=json.dumps(state.profile, indent=2)).to_messages()
+    ).content
     try:
         queries = json.loads(q)
     except json.JSONDecodeError:
         queries = [q.strip()]
 
-    evidences: List[Dict[str, Any]] = []
+    evidences: list[dict[str, Any]] = []
     for query in queries:
         for col in (risks, papers):
             for doc, score in col.similarity_search_with_score(query, k=6):
-                evidences.append({"content": doc.page_content, "metadata": doc.metadata, "score": score})
+                evidences.append(
+                    {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": score,
+                    }
+                )
     evidences = sorted(evidences, key=lambda e: e["score"])[:8]
     state.evidences = evidences
     return state
 
 
 # ───────────────────────── writer & refiner ──────────────────
-writer_prompt = ChatPromptTemplate.from_messages([
-    ("system", prompts["writer_system"]),
-    ("human", "PROFILE:\n{prof}"),
-    ("human", "EVIDENCES:\n{ev}"),
-])
+writer_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", prompts["writer_system"]),
+        ("human", "PROFILE:\n{prof}"),
+        ("human", "EVIDENCES:\n{ev}"),
+    ]
+)
 
 
 def writer(state: GraphState):
-    refs = [f"[S{i + 1}] {e['metadata'].get('title', '')[:80]}" for i, e in enumerate(state.evidences)]
-    ev_snips = "\n".join(f"[S{i + 1}] {e['content'][:250]}…" for i, e in enumerate(state.evidences))
+    refs = [
+        f"[S{i + 1}] {e['metadata'].get('title', '')[:80]}"
+        for i, e in enumerate(state.evidences)
+    ]
+    ev_snips = "\n".join(
+        f"[S{i + 1}] {e['content'][:250]}…" for i, e in enumerate(state.evidences)
+    )
     draft = llm.invoke(
-        writer_prompt.format_prompt(prof=json.dumps(state.profile, indent=2), ev=ev_snips).to_messages()).content
+        writer_prompt.format_prompt(
+            prof=json.dumps(state.profile, indent=2), ev=ev_snips
+        ).to_messages()
+    ).content
     state.strategy = draft + "\n\nReferences:\n" + "\n".join(refs)
     return state
 
 
 # ───────────────────────── reviewer node ─────────────────────
-reviewer_prompt = ChatPromptTemplate.from_messages([
-    ("system", prompts["reviewer_system"]),
-    ("human", "PROFILE:\n{prof}"),
-    ("human", "EVIDENCES:\n{ev}"),
-    ("human", "CURRENT STRATEGY:\n{strat}"),
-])
+reviewer_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", prompts["reviewer_system"]),
+        ("human", "PROFILE:\n{prof}"),
+        ("human", "EVIDENCES:\n{ev}"),
+        ("human", "CURRENT STRATEGY:\n{strat}"),
+    ]
+)
 
 
 def reviewer(state: GraphState) -> GraphState:
@@ -219,8 +270,10 @@ def reviewer(state: GraphState) -> GraphState:
         # Should not happen if graph is wired correctly
         return state
 
-    ev_snips = "\n".join(f"[S{i + 1}] {e['content'][:250]}…" for i, e in enumerate(state.evidences))
-    
+    ev_snips = "\n".join(
+        f"[S{i + 1}] {e['content'][:250]}…" for i, e in enumerate(state.evidences)
+    )
+
     # Separate references from the main strategy text if they exist
     strategy_parts = state.strategy.split("\n\nReferences:\n")
     main_strategy_text = strategy_parts[0]
@@ -230,18 +283,21 @@ def reviewer(state: GraphState) -> GraphState:
 
     improved_strategy = llm.invoke(
         reviewer_prompt.format_prompt(
-            prof=json.dumps(state.profile, indent=2), 
-            ev=ev_snips, 
-            strat=main_strategy_text
+            prof=json.dumps(state.profile, indent=2),
+            ev=ev_snips,
+            strat=main_strategy_text,
         ).to_messages()
     ).content
 
-    state.strategy = improved_strategy + references_text # Append references back
-    state.ai_messages = [AIMessage(content="The Responsible AI strategy has been reviewed and refined.")] # Optional: notify user
+    state.strategy = improved_strategy + references_text  # Append references back
+    state.ai_messages = [
+        AIMessage(content="The Responsible AI strategy has been reviewed and refined.")
+    ]  # Optional: notify user
     return state
 
 
 # ───────────────────────── graph build ───────────────────────
+
 
 def route_interviews(state: GraphState) -> str:
     """Routes to the correct interview stage."""
@@ -251,12 +307,14 @@ def route_interviews(state: GraphState) -> str:
     else:
         return "predefined_interview"
 
+
 def after_predefined_interview_condition(state: GraphState) -> str:
     """Proceed to freeform interview after predefined questions, or end run to await user input."""
     if state.profile is not None:  # Predefined interview complete
         return "freeform_interview"
-    else: # Predefined interview ongoing
+    else:  # Predefined interview ongoing
         return "__END__"
+
 
 def after_freeform_interview_condition(state: GraphState) -> str:
     """Checks if the freeform interview is complete based on several conditions."""
@@ -268,15 +326,24 @@ def after_freeform_interview_condition(state: GraphState) -> str:
     # The most recent user message is in the `user_messages` list before being appended to history
     if state.user_messages:
         last_user_message = state.user_messages[-1].content.lower()
-        stop_phrases = ["stop", "that's enough", "i don't want to answer", "quit", "exit"]
+        stop_phrases = [
+            "stop",
+            "that's enough",
+            "i don't want to answer",
+            "quit",
+            "exit",
+        ]
         if any(phrase in last_user_message for phrase in stop_phrases):
             return "summarize_profile"
 
     # 3. Check if the LLM has decided to end the conversation
     if not state.conversation_history:
-        return "__END__" # Should not happen in normal flow
-    
-    history_str = "\n".join(f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in state.conversation_history)
+        return "__END__"  # Should not happen in normal flow
+
+    history_str = "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}"
+        for m in state.conversation_history
+    )
     completion_check = completion_check_prompt.format_prompt(history=history_str)
     response = llm.invoke(completion_check.to_messages())
     try:
@@ -284,8 +351,8 @@ def after_freeform_interview_condition(state: GraphState) -> str:
         if is_complete:
             return "summarize_profile"
     except json.JSONDecodeError:
-        pass # Not complete, continue interview
-    
+        pass  # Not complete, continue interview
+
     return "__END__"
 
 
@@ -312,10 +379,7 @@ graph.set_conditional_entry_point(
 graph.add_conditional_edges(
     "predefined_interview",
     after_predefined_interview_condition,
-    {
-        "freeform_interview": "freeform_interview",
-        "__END__": END
-    }
+    {"freeform_interview": "freeform_interview", "__END__": END},
 )
 
 # Path for freeform interview
@@ -333,7 +397,7 @@ graph.add_edge("summarize_profile", "retriever")
 graph.add_edge("retriever", "writer")
 graph.add_edge("writer", "reviewer")
 
-graph.set_finish_point("reviewer") # This is the overall graph finish
+graph.set_finish_point("reviewer")  # This is the overall graph finish
 workflow = graph.compile()
 
 
@@ -341,7 +405,7 @@ workflow = graph.compile()
 async def chat_loop():
     print("Starting interview process...")
     # Start with a clear state, but ensure essential lists and counters are initialized
-    state = {"user_messages": [], "answers": [], "freeform_question_count": 0} 
+    state = {"user_messages": [], "answers": [], "freeform_question_count": 0}
 
     # Initial invocation to get the first AI message (the first question)
     state = await workflow.ainvoke(state)
@@ -361,7 +425,7 @@ async def chat_loop():
         user_input = input("You: ").strip()
         if user_input.lower() in {"quit", "exit"}:
             break
-        
+
         # Pass the user message back into the state for the next invocation
         state["user_messages"] = [HumanMessage(content=user_input)]
         state = await workflow.ainvoke(state)

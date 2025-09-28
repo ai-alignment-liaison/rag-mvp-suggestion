@@ -3,7 +3,6 @@ import re
 import uuid
 import io
 from pathlib import Path
-from typing import Dict, List
 
 import pandas as pd
 import requests
@@ -19,12 +18,13 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["MallocStackLogging"] = "0"
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 # from sentence_transformers import SentenceTransformer # No longer directly used
 # from chromadb import PersistentClient # No longer directly used
 import PyPDF2
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma # Use LangChain's Chroma
+from langchain_chroma import Chroma  # Use LangChain's Chroma
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 0. Config & helpers
@@ -32,16 +32,18 @@ from langchain_chroma import Chroma # Use LangChain's Chroma
 load_dotenv()
 
 SHEET_URL = os.getenv("MIT_RISKS_SHEET_URL")
-PAPERS_DIR = Path(os.getenv("PAPERS_DIR", "./papers"))
+PAPERS_DIR = Path(os.getenv("PAPERS_DIR", "./data/papers"))
 # CHROMA_PERSIST_DIR is used by LangChain's Chroma wrapper directly
-CHROMA_PERSIST_DIR = Path(os.getenv("CHROMA_PERSIST_DIR", "./vector_store"))
+CHROMA_PERSIST_DIR = Path(os.getenv("CHROMA_PERSIST_DIR", "./data/vector_store"))
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL", "BAAI/bge-base-en")
 
 # Ensure the persist directory exists
 CHROMA_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
 
 if not SHEET_URL:
-    raise ValueError("MIT_RISKS_SHEET_URL is not set – please add it to your .env file.")
+    raise ValueError(
+        "MIT_RISKS_SHEET_URL is not set – please add it to your .env file."
+    )
 
 # Deterministic UUID namespaces (repeatable ingestion)
 NAMESPACE_MIT = uuid.uuid5(uuid.NAMESPACE_URL, "mit-ai-risks")
@@ -49,7 +51,9 @@ NAMESPACE_PDF = uuid.uuid5(uuid.NAMESPACE_URL, "responsible-ai-papers")
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 # embedder = SentenceTransformer(EMBED_MODEL_NAME, device="cpu") # Replaced by LangChain's Embeddings
-EMBED = HuggingFaceEmbeddings(model_name=EMBED_MODEL_NAME, encode_kwargs={"normalize_embeddings": True})
+EMBED = HuggingFaceEmbeddings(
+    model_name=EMBED_MODEL_NAME, encode_kwargs={"normalize_embeddings": True}
+)
 
 # Chroma client is now handled by the Chroma.from_documents method
 # client = PersistentClient(path=str(CHROMA_PERSIST_DIR))
@@ -69,7 +73,9 @@ def _to_csv_export(url: str) -> str:
     sheet_id = m.group(1)
     gid_m = re.search(r"[?&]gid=(\d+)", url)
     gid_part = f"&gid={gid_m.group(1)}" if gid_m else ""
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid_part}"
+    return (
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid_part}"
+    )
 
 
 def load_mit_sheet(url: str) -> pd.DataFrame:
@@ -81,7 +87,7 @@ def load_mit_sheet(url: str) -> pd.DataFrame:
     return df
 
 
-def row_to_docs(row: pd.Series) -> List[Document]:
+def row_to_docs(row: pd.Series) -> list[Document]:
     base_meta = {
         "title": row.get("risk"),
         "source_type": "mit_ai_risk_sheet",
@@ -90,16 +96,22 @@ def row_to_docs(row: pd.Series) -> List[Document]:
     }
     text = "\n".join(
         f"{k.replace('_', ' ').capitalize()}: {v}"
-        for k, v in row.items() if k not in ("id",)
+        for k, v in row.items()
+        if k not in ("id",)
     )
     docs = []
     for i, chunk in enumerate(text_splitter.split_text(text)):
-        cleaned_metadata = _clean_meta({**base_meta, "row_index": int(row.name), "chunk_index": i})
-        docs.append(Document(
-            page_content=chunk,
-            metadata=cleaned_metadata,
-        ))
+        cleaned_metadata = _clean_meta(
+            {**base_meta, "row_index": int(row.name), "chunk_index": i}
+        )
+        docs.append(
+            Document(
+                page_content=chunk,
+                metadata=cleaned_metadata,
+            )
+        )
     return docs
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. PDF loader
@@ -124,7 +136,7 @@ def detect_license(first_page: str) -> str:
     return "unknown"
 
 
-def pdf_to_docs(pdf: Path) -> List[Document]:
+def pdf_to_docs(pdf: Path) -> list[Document]:
     raw = pdf_to_text(pdf)
     if not raw.strip():
         return []
@@ -135,20 +147,20 @@ def pdf_to_docs(pdf: Path) -> List[Document]:
     licence = detect_license(header)
     docs = []
     for i, chunk in enumerate(text_splitter.split_text(raw)):
-        cleaned_metadata = _clean_meta({
-            "title": title,
-            "authors": authors,
-            "source_type": "responsible_ai_paper",
-            "file_name": pdf.name,
-            "license": licence,
-            "url": f"file://{pdf.resolve()}",
-            "chunk_index": i,
-        })
-        docs.append(Document(
-            page_content=chunk,
-            metadata=cleaned_metadata
-        ))
+        cleaned_metadata = _clean_meta(
+            {
+                "title": title,
+                "authors": authors,
+                "source_type": "responsible_ai_paper",
+                "file_name": pdf.name,
+                "license": licence,
+                "url": f"file://{pdf.resolve()}",
+                "chunk_index": i,
+            }
+        )
+        docs.append(Document(page_content=chunk, metadata=cleaned_metadata))
     return docs
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Embedding + sanitised upsert
@@ -158,11 +170,15 @@ def pdf_to_docs(pdf: Path) -> List[Document]:
 #     return EMBED.embed_documents(texts)
 
 
-def _clean_meta(meta: Dict) -> Dict:
-    return {k: v for k, v in meta.items() if v is not None and not (isinstance(v, float) and pd.isna(v))}
+def _clean_meta(meta: dict) -> dict:
+    return {
+        k: v
+        for k, v in meta.items()
+        if v is not None and not (isinstance(v, float) and pd.isna(v))
+    }
 
 
-def upsert(collection_name: str, docs: List[Document]):
+def upsert(collection_name: str, docs: list[Document]):
     if not docs:
         return
     # The previous edit already changed this to Chroma.from_documents,
@@ -175,6 +191,7 @@ def upsert(collection_name: str, docs: List[Document]):
     # Placeholder for now, the actual Chroma creation/update will be in main.
     print(f"Prepared {len(docs)} documents for collection {collection_name}")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Main script
 # ─────────────────────────────────────────────────────────────────────────────
@@ -185,14 +202,16 @@ def main():
     mit_docs = []
     for _, row in load_mit_sheet(SHEET_URL).iterrows():
         mit_docs.extend(row_to_docs(row))
-    
+
     if mit_docs:
-        print(f"Creating/updating MIT AI Risks collection with {len(mit_docs)} documents...")
+        print(
+            f"Creating/updating MIT AI Risks collection with {len(mit_docs)} documents..."
+        )
         Chroma.from_documents(
             documents=mit_docs,
             embedding=EMBED,
             collection_name="mit_ai_risks",
-            persist_directory=str(CHROMA_PERSIST_DIR)
+            persist_directory=str(CHROMA_PERSIST_DIR),
         )
         print(f"↑ {len(mit_docs)} docs → mit_ai_risks")
     else:
@@ -206,14 +225,16 @@ def main():
         for pdf_file in PAPERS_DIR.glob("*.pdf"):
             print(" ", pdf_file.name)
             pdf_docs.extend(pdf_to_docs(pdf_file))
-        
+
         if pdf_docs:
-            print(f"Creating/updating Responsible AI Papers collection with {len(pdf_docs)} documents...")
+            print(
+                f"Creating/updating Responsible AI Papers collection with {len(pdf_docs)} documents..."
+            )
             Chroma.from_documents(
                 documents=pdf_docs,
                 embedding=EMBED,
                 collection_name="responsible_ai_papers",
-                persist_directory=str(CHROMA_PERSIST_DIR)
+                persist_directory=str(CHROMA_PERSIST_DIR),
             )
             print(f"↑ {len(pdf_docs)} docs → responsible_ai_papers")
         else:

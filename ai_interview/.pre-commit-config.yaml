@@ -1,0 +1,28 @@
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.5            # pin to a recent tag
+    hooks:
+      - id: ruff           # lint; auto-fix issues
+        args: [--fix]
+      - id: ruff-format    # code formatter (Black-compatible style)
+
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.16.0
+    hooks:
+      - id: pyupgrade
+        args: [--py310-plus]   # or --py311-plus if you’ve standardized on 3.11
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # Optional: enforce Conventional Commits for semantic-release
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.28.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
