@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-from .ingestion_pipeline import load_mit_sheet, row_to_docs
-from .ingestion_pipeline import pdf_to_docs
+from src.rag_project.ingestion_pipeline import load_mit_sheet, row_to_docs
+from src.rag_project.ingestion_pipeline import pdf_to_docs
 import torch
 
 if not hasattr(torch, "get_default_device"):
@@ -38,15 +38,15 @@ from langchain.schema import AIMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 # httpx removed - no longer needed for OpenAI client
 
-# Import ingestion functions (package-relative)
-from .ingestion_pipeline import (
+# Import ingestion functions (absolute)
+from src.rag_project.ingestion_pipeline import (
     PAPERS_DIR,
     EMBED,
 )
 
 
-# Import questionnaire transformer (package-relative)
-from .questionnaire_transformer import (
+# Import questionnaire transformer (absolute)
+from src.rag_project.questionnaire_transformer import (
     transform_ui_data_to_rag_profile,
     get_questionnaire_context_string,
 )
@@ -232,7 +232,7 @@ COL_DIR.mkdir(parents=True, exist_ok=True)
 
 try:
     llm = ChatOpenAI(
-        model="gpt-5-mini",
+        model="gpt-4o-mini",
         # temperature=0.5,
     )
 except Exception as e:
