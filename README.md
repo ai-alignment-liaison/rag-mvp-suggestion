@@ -1,6 +1,7 @@
 # RAG MVP - Responsible AI Strategy Generator
 
 This project implements a comprehensive Retrieval Augmented Generation (RAG) system that conducts interactive interviews and generates personalized Responsible AI strategies. The system features a sophisticated orchestration pipeline using LangGraph, structured outputs with Pydantic validation, and robust error handling.
+Note: this is work in progress
 
 ## 🎯 **Key Features**
 
